@@ -1,6 +1,6 @@
-# Documentación Oficial de Licencias: Inferencia IA y Pesos en EffectPic
+# Documentación Oficial de Licencias y Estado de Distribución: EffectPic
 
-Este documento detalla y respalda formalmente las licencias aplicables al código fuente, los archivos de pesos binarios (modelos ONNX) y el árbol de dependencias de tiempo de ejecución para la funcionalidad de desenfoque de profundidad y recorte de fondo en **EffectPic**.
+Este documento detalla y respalda formalmente las licencias aplicables al código fuente, los archivos de pesos binarios (modelos ONNX), el árbol de dependencias de tiempo de ejecución y el **estado de validación del paquete de distribución** para **EffectPic**.
 
 ---
 
@@ -39,6 +39,23 @@ Probado y fijado en **Ubuntu 24.04 LTS (x86_64, Python 3.12)**:
 
 * **Procesador (CPU)**: AMD Ryzen 7 5700G (8 núcleos / 16 hilos, base 3.8 GHz, boost 4.6 GHz).
 * **Consumo de Memoria (`ru_maxrss`)**:
-  En sistemas Linux, el valor devuelto por `resource.getrusage(resource.RUSAGE_SELF).ru_maxrss` representa el **pico histórico máximo de memoria residente (RSS high-water mark)** alcanzado por el proceso desde su inicio hasta el momento de la consulta (expresado en kilobytes). No mide la memoria viva instantánea liberada por el recolector de basura, sino la cota superior física demandada al sistema operativo.
+  En sistemas Linux, el valor devuelto por `resource.getrusage(resource.RUSAGE_SELF).ru_maxrss` representa el **pico histórico máximo de memoria residente (RSS high-water mark)** alcanzado por el proceso desde su inicio hasta el momento de la consulta (expresado en kilobytes). No mide la memoria viva instantánea liberada por el recolector de basura, sino la cota superior física demandada al sistema operativo durante la inferencia.
 * **Medición de Tiempos**:
   Determinada mediante `time.perf_counter()` en CPU con tensores nativos de ONNX Runtime, promediando 20 iteraciones para la previsualización y 5 para la exportación completa.
+
+---
+
+## 4. Estado de Validación del Paquete de Distribución (`.deb`)
+
+* **Estado**: **PENDIENTE de validación en máquina virtual (VM) o sistema limpio**.
+* **Alcance de las pruebas locales ejecutadas**:
+  Las pruebas realizadas en el entorno de desarrollo (`test_clean_install.sh`) constituyen una **prueba preliminar parcial en espacio de usuario**, con las siguientes limitaciones explícitas:
+  1. `dpkg -x` únicamente verifica la extracción de archivos, no el proceso real de instalación mediante `apt` o `dpkg -i` (scripts `preinst`/`postinst`, dependencias del gestor de paquetes).
+  2. El modelo de prueba fue copiado desde la caché local del usuario; no se evaluó la descarga autónoma desde la red en un sistema virgen.
+  3. El bloqueo de red mediante `socket.connect` es una simulación interna en Python, no un aislamiento de red a nivel de interfaz del sistema operativo.
+  4. No se verificó la integración real con el entorno de escritorio (lanzador en el menú de aplicaciones GNOME ni asociaciones MIME).
+* **Requisito para aprobación final**:
+  Instalación completa mediante `sudo apt install ./effectpic_1.0.0_all.deb` en una instalación limpia de Ubuntu 24.04 (en VM o hardware dedicado), validando:
+  - Primer arranque y descarga guiada de dependencias/modelo.
+  - Apertura desde el acceso directo del menú de aplicaciones de GNOME.
+  - Segundo arranque en modo avión (sin interfaz de red) con verificación de funcionamiento local offline.
