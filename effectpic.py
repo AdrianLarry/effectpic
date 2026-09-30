@@ -1,15 +1,44 @@
 #!/usr/bin/env python3
 
+import os
+import sys
+import glob
+
+# Auto-detección del entorno virtual local (.venv):
+# Si se ejecuta con el Python del sistema (/bin/python3 effectpic.py)
+# sin activar el venv, se incorporan automáticamente los paquetes de .venv
+# para que rembg, onnxruntime y dependencias estén disponibles de inmediato.
+_dir_base = os.path.dirname(os.path.abspath(__file__))
+_venv_sites = glob.glob(os.path.join(_dir_base, ".venv", "lib", "python*", "site-packages"))
+for _p in _venv_sites:
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import gi
 gi.require_version("Gtk", "4.0")
 
 import copy
-import os
 import re
 import tempfile
+import threading
 
 from gi.repository import Gtk, Gio, Gdk, GdkPixbuf, GLib
 from PIL import Image, ImageOps, ImageFilter, ImageEnhance
+
+# Sesión ONNX Runtime de inferencia rembg (Singleton reutilizable)
+_rembg_session = None
+
+def obtener_sesion_rembg(modelo="u2net"):
+    """
+    Obtiene o inicializa una sesión de inferencia de rembg con el modelo
+    especificado explícitamente (u2net por defecto, bajo licencia Apache 2.0).
+    Reutiliza la misma sesión para evitar recargas del archivo ONNX.
+    """
+    global _rembg_session
+    if _rembg_session is None:
+        import rembg
+        _rembg_session = rembg.new_session(modelo)
+    return _rembg_session
 
 
 # Nombre visible -> resolución REAL de salida
@@ -32,6 +61,287 @@ PRESETS_RETOQUE = {
     "B&N Suave": (10, 5, -100),
 }
 
+CSS_ESTILO = """
+window.main-window {
+    background-color: #0f1013;
+    color: #e2e8f0;
+}
+
+/* Header & Top Bar */
+.top-bar {
+    background-color: #17181f;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 8px 14px;
+}
+
+.app-title {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: -0.4px;
+    color: #ffffff;
+}
+
+.app-tag {
+    font-size: 10px;
+    font-weight: 700;
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    border-radius: 6px;
+    padding: 2px 6px;
+}
+
+/* Buttons */
+button {
+    border-radius: 8px;
+    font-weight: 600;
+    color: #f8fafc;
+    background-color: #262835;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    transition: all 120ms ease-in-out;
+}
+
+button:hover {
+    background-color: #35384a;
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+}
+
+button:active {
+    background-color: #1e1f2b;
+}
+
+button:disabled {
+    background-color: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.btn-abrir {
+    background: #2b2e40;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+    font-weight: 700;
+    padding: 6px 14px;
+}
+.btn-abrir:hover {
+    background: #393d55;
+    border-color: rgba(255, 255, 255, 0.32);
+}
+
+/* Compare Button */
+.btn-comparar {
+    background: #202436;
+    border: 1px solid #3b82f6;
+    color: #93c5fd;
+    font-weight: 600;
+}
+.btn-comparar:hover {
+    background: #28314a;
+    border-color: #60a5fa;
+    color: #bfdbfe;
+}
+.btn-comparar:checked {
+    background: rgba(16, 185, 129, 0.25);
+    border: 1px solid #10b981;
+    color: #34d399;
+    font-weight: 700;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+.btn-comparar:disabled {
+    background-color: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* DropDowns */
+dropdown > button {
+    background-color: #262835;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #f8fafc;
+    border-radius: 8px;
+    font-weight: 600;
+}
+dropdown > button:hover {
+    background-color: #35384a;
+    border-color: rgba(255, 255, 255, 0.28);
+}
+dropdown > button:disabled {
+    background-color: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.badge-info {
+    font-size: 12px;
+    font-weight: 600;
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 4px 10px;
+}
+
+/* Empty State */
+.empty-state-card {
+    border: 2px dashed rgba(255, 255, 255, 0.14);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.02);
+    padding: 48px 56px;
+}
+.empty-state-card:hover {
+    border-color: rgba(99, 102, 241, 0.45);
+    background: rgba(99, 102, 241, 0.04);
+}
+
+.empty-icon {
+    color: #818cf8;
+}
+
+.empty-title {
+    font-size: 20px;
+    font-weight: 800;
+    color: #f8fafc;
+    letter-spacing: -0.3px;
+}
+
+.empty-subtitle {
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+.format-pill {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #64748b;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    padding: 2px 8px;
+}
+
+/* Canvas Frame */
+.canvas-frame {
+    border-radius: 12px;
+}
+
+/* Bottom Cards */
+.card-dock {
+    background-color: #17181f;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 8px 14px;
+}
+
+.dock-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #94a3b8;
+}
+
+/* Segmented Buttons */
+.segmented-box {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 3px;
+}
+.segmented-box button {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-weight: 600;
+    font-size: 12px;
+    color: #94a3b8;
+}
+.segmented-box button:checked {
+    background: #2a2d3d;
+    color: #ffffff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* Sliders */
+scale trough {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    min-height: 4px;
+    min-width: 4px;
+}
+scale highlight {
+    background: #6366f1;
+    border-radius: 999px;
+}
+scale slider {
+    background-color: #ffffff;
+    border: 2px solid #6366f1;
+    border-radius: 50%;
+    min-width: 14px;
+    min-height: 14px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+scale slider:hover {
+    background-color: #c7d2fe;
+}
+
+/* Export Button */
+.btn-exportar-principal {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 13px;
+    border-radius: 10px;
+    border: none;
+    padding: 8px 20px;
+    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+}
+.btn-exportar-principal:hover {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    box-shadow: 0 6px 22px rgba(99, 102, 241, 0.6);
+}
+.btn-exportar-principal:disabled {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.25);
+    box-shadow: none;
+}
+
+/* Filmstrip */
+.carrusel-strip {
+    background: #17181f;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+}
+.carrusel-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    padding: 4px;
+}
+.carrusel-card-active {
+    border-color: #6366f1;
+    background: rgba(99, 102, 241, 0.12);
+}
+
+/* Badge & Spinner de IA (Modo Retrato) */
+.badge-ia {
+    font-size: 11px;
+    font-weight: 700;
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    border-radius: 6px;
+    padding: 2px 8px;
+}
+.badge-ia-ready {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.35);
+}
+"""
+
 
 class ItemCarrusel:
 
@@ -46,6 +356,11 @@ class ItemCarrusel:
         self.brillo = 0.0
         self.contraste = 0.0
         self.saturacion = 0.0
+
+        # Máscara binaria/escala de grises ('L') del sujeto calculada por IA (u2net)
+        # Se almacena en la foto activa para no recalcularla en cada ajuste.
+        # No se duplica en el historial de deshacer/rehacer.
+        self.mascara_sujeto = None
 
         self.historial_deshacer = []
         self.historial_rehacer = []
@@ -68,7 +383,12 @@ class ItemCarrusel:
             print("Error cargando miniatura:", e)
 
     def guardar_desde_ventana(self, win):
-        self.modo = "recortar" if win.modo_recortar.get_active() else "blur"
+        if win.modo_retrato.get_active():
+            self.modo = "retrato"
+        elif win.modo_recortar.get_active():
+            self.modo = "recortar"
+        else:
+            self.modo = "blur"
         self.blur_valor = win.blur_valor
         self.zoom = win.zoom_ajuste.get_value()
         self.offset_x = win.offset_x
@@ -114,6 +434,21 @@ class EffectPic(Gtk.Application):
             flags=Gio.ApplicationFlags.HANDLES_OPEN
         )
 
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        self.cargar_estilos_css()
+
+    def cargar_estilos_css(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS_ESTILO.encode("utf-8"))
+        display = Gdk.Display.get_default()
+        if display:
+            Gtk.StyleContext.add_provider_for_display(
+                display,
+                provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+
     def do_activate(self):
         self.ventana = EffectPicWindow(self)
         self.ventana.present()
@@ -134,12 +469,21 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         super().__init__(application=app)
 
         self.set_title("EffectPic")
-        self.set_default_size(1100, 800)
+        self.set_default_size(1180, 840)
+        self.add_css_class("main-window")
+
+        # Soporte para arrastrar y soltar imágenes directamente a la ventana
+        target_drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+        target_drop.connect("drop", self._archivos_soltados)
+        self.add_controller(target_drop)
 
         self.ruta_actual = None
         self.preview_temporal = None
         self.preview_temporal_original = None
         self.tecla_comparar_activa = False
+
+        # Secuencia de detección para invalidar resultados obsoletos
+        self._secuencia_deteccion = 0
 
         # Modo Carrusel
         self.carrusel = []
@@ -179,38 +523,83 @@ class EffectPicWindow(Gtk.ApplicationWindow):
 
         principal.set_margin_top(12)
         principal.set_margin_bottom(12)
-        principal.set_margin_start(12)
-        principal.set_margin_end(12)
+        principal.set_margin_start(14)
+        principal.set_margin_end(14)
 
         self.set_child(principal)
 
         # ============================================================
-        # BARRA SUPERIOR
+        # BARRA SUPERIOR (HEADER ESTUDIO)
         # ============================================================
 
         barra = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=10
         )
+        barra.add_css_class("top-bar")
 
         principal.append(barra)
 
-        boton_abrir = Gtk.Button(label="Abrir imagen")
+        # Logotipo / Nombre de la app
+        caja_marca = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=4
+        )
+        caja_marca.set_valign(Gtk.Align.CENTER)
+        caja_marca.set_margin_end(6)
+
+        icono_marca = Gtk.Image.new_from_icon_name("camera-photo-symbolic")
+        caja_marca.append(icono_marca)
+
+        lbl_marca = Gtk.Label(label="EffectPic")
+        lbl_marca.add_css_class("app-title")
+        caja_marca.append(lbl_marca)
+
+        lbl_tag = Gtk.Label(label="STUDIO")
+        lbl_tag.add_css_class("app-tag")
+        caja_marca.append(lbl_tag)
+
+        barra.append(caja_marca)
+
+        sep_marca = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        barra.append(sep_marca)
+
+        # Botón Abrir con ícono
+        boton_abrir = Gtk.Button()
+        boton_abrir.add_css_class("btn-abrir")
+        caja_btn_abrir = Gtk.Box(spacing=6)
+        caja_btn_abrir.append(Gtk.Image.new_from_icon_name("document-open-symbolic"))
+        caja_btn_abrir.append(Gtk.Label(label="Abrir"))
+        boton_abrir.set_child(caja_btn_abrir)
+        boton_abrir.set_tooltip_text("Abrir una o varias fotos (o arrastralas a la ventana)")
         boton_abrir.connect("clicked", self.abrir_imagen)
         barra.append(boton_abrir)
 
-        # Botones Deshacer y Rehacer
-        self.boton_deshacer = Gtk.Button(label="Deshacer")
+        # Botones Deshacer y Rehacer agrupados
+        caja_undo_redo = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        caja_undo_redo.add_css_class("linked")
+
+        self.boton_deshacer = Gtk.Button()
+        caja_btn_undo = Gtk.Box(spacing=4)
+        caja_btn_undo.append(Gtk.Image.new_from_icon_name("edit-undo-symbolic"))
+        caja_btn_undo.append(Gtk.Label(label="Deshacer"))
+        self.boton_deshacer.set_child(caja_btn_undo)
         self.boton_deshacer.set_tooltip_text("Deshacer última acción (Ctrl+Z)")
         self.boton_deshacer.set_sensitive(False)
         self.boton_deshacer.connect("clicked", lambda b: self.deshacer())
-        barra.append(self.boton_deshacer)
+        caja_undo_redo.append(self.boton_deshacer)
 
-        self.boton_rehacer = Gtk.Button(label="Rehacer")
+        self.boton_rehacer = Gtk.Button()
+        caja_btn_redo = Gtk.Box(spacing=4)
+        caja_btn_redo.append(Gtk.Image.new_from_icon_name("edit-redo-symbolic"))
+        caja_btn_redo.append(Gtk.Label(label="Rehacer"))
+        self.boton_rehacer.set_child(caja_btn_redo)
         self.boton_rehacer.set_tooltip_text("Rehacer última acción (Ctrl+Shift+Z)")
         self.boton_rehacer.set_sensitive(False)
         self.boton_rehacer.connect("clicked", lambda b: self.rehacer())
-        barra.append(self.boton_rehacer)
+        caja_undo_redo.append(self.boton_rehacer)
+
+        barra.append(caja_undo_redo)
 
         self.boton_restaurar = Gtk.Button(label="Restaurar")
         self.boton_restaurar.set_tooltip_text("Restaurar al estado original")
@@ -218,120 +607,130 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         self.boton_restaurar.connect("clicked", lambda b: self.restaurar_original())
         barra.append(self.boton_restaurar)
 
+        sep_barra1 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        barra.append(sep_barra1)
+
         self.boton_comparar = Gtk.ToggleButton(label="Comparar")
-        self.boton_comparar.set_tooltip_text(
-            "Alternar o mantener [Espacio] para ver original"
-        )
+        self.boton_comparar.add_css_class("btn-comparar")
+        self.boton_comparar.set_tooltip_text("Alternar o mantener [Espacio] para ver original")
         self.boton_comparar.set_sensitive(False)
-        self.boton_comparar.connect(
-            "toggled",
-            self.comparar_toggled
-        )
+        self.boton_comparar.connect("toggled", self.comparar_toggled)
         barra.append(self.boton_comparar)
 
-        separador_barra = Gtk.Separator(
-            orientation=Gtk.Orientation.VERTICAL
-        )
-        barra.append(separador_barra)
+        sep_barra2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        barra.append(sep_barra2)
 
-        barra.append(Gtk.Label(label="Formato:"))
+        lbl_formato = Gtk.Label(label="Formato:")
+        lbl_formato.add_css_class("dock-label")
+        barra.append(lbl_formato)
 
         self.selector = Gtk.DropDown.new_from_strings(
             list(FORMATOS.keys())
         )
-
         self.selector.set_selected(0)
-
-        self.selector.connect(
-            "notify::selected",
-            self.formato_cambiado
-        )
-
+        self.selector.connect("notify::selected", self.formato_cambiado)
         barra.append(self.selector)
 
-        self.info = Gtk.Label(
-            label="Ninguna imagen abierta"
-        )
-
+        self.info = Gtk.Label(label="Ninguna imagen abierta")
+        self.info.add_css_class("badge-info")
         self.info.set_hexpand(True)
         self.info.set_halign(Gtk.Align.END)
-
         barra.append(self.info)
 
         # ============================================================
-        # ÁREA DE PREVISUALIZACIÓN
+        # ÁREA DE PREVISUALIZACIÓN Y EMPTY STATE
         # ============================================================
 
         self.area_preview = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL
         )
-
         self.area_preview.set_hexpand(True)
         self.area_preview.set_vexpand(True)
-
         self.area_preview.set_halign(Gtk.Align.FILL)
         self.area_preview.set_valign(Gtk.Align.FILL)
 
         principal.append(self.area_preview)
 
-        # ============================================================
-        # LIENZO
-        # ============================================================
+        # Estado vacío (Empty State)
+        self.caja_vacia = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=14
+        )
+        self.caja_vacia.add_css_class("empty-state-card")
+        self.caja_vacia.set_halign(Gtk.Align.CENTER)
+        self.caja_vacia.set_valign(Gtk.Align.CENTER)
+        self.caja_vacia.set_hexpand(True)
+        self.caja_vacia.set_vexpand(True)
 
+        icono_vacio = Gtk.Image.new_from_icon_name("image-x-generic-symbolic")
+        icono_vacio.set_pixel_size(72)
+        icono_vacio.add_css_class("empty-icon")
+        self.caja_vacia.append(icono_vacio)
+
+        lbl_vacio_tit = Gtk.Label(label="Arrastrá tus fotos acá")
+        lbl_vacio_tit.add_css_class("empty-title")
+        self.caja_vacia.append(lbl_vacio_tit)
+
+        lbl_vacio_sub = Gtk.Label(label="o hacé clic abajo para abrir una imagen o carrusel")
+        lbl_vacio_sub.add_css_class("empty-subtitle")
+        self.caja_vacia.append(lbl_vacio_sub)
+
+        btn_vacio_abrir = Gtk.Button()
+        btn_vacio_abrir.add_css_class("btn-abrir")
+        caja_btn_vacio = Gtk.Box(spacing=8)
+        caja_btn_vacio.append(Gtk.Image.new_from_icon_name("document-open-symbolic"))
+        caja_btn_vacio.append(Gtk.Label(label="Elegir fotos..."))
+        btn_vacio_abrir.set_child(caja_btn_vacio)
+        btn_vacio_abrir.connect("clicked", self.abrir_imagen)
+        self.caja_vacia.append(btn_vacio_abrir)
+
+        caja_pills = Gtk.Box(spacing=6)
+        caja_pills.set_halign(Gtk.Align.CENTER)
+        for fmt in ("JPG", "PNG", "WEBP"):
+            p = Gtk.Label(label=fmt)
+            p.add_css_class("format-pill")
+            caja_pills.append(p)
+        self.caja_vacia.append(caja_pills)
+
+        self.area_preview.append(self.caja_vacia)
+
+        # Lienzo (inicialmente oculto hasta cargar imagen)
         self.marco = Gtk.AspectFrame(
             xalign=0.5,
             yalign=0.5,
             ratio=1.0,
             obey_child=False
         )
-
+        self.marco.add_css_class("canvas-frame")
         self.marco.set_halign(Gtk.Align.CENTER)
         self.marco.set_valign(Gtk.Align.CENTER)
+        self.marco.set_visible(False)
 
         self.area_preview.append(self.marco)
 
         self.imagen = Gtk.Picture()
-
         self.imagen.set_can_shrink(True)
         self.imagen.set_content_fit(Gtk.ContentFit.CONTAIN)
-
         self.imagen.set_hexpand(True)
         self.imagen.set_vexpand(True)
 
         self.marco.set_child(self.imagen)
 
         self.gesto_arrastre = Gtk.GestureDrag()
-        self.gesto_arrastre.connect(
-            "drag-begin",
-            self.arrastre_iniciado
-        )
-        self.gesto_arrastre.connect(
-            "drag-update",
-            self.arrastre_actualizado
-        )
-        self.gesto_arrastre.connect(
-            "drag-end",
-            self.arrastre_terminado
-        )
-        self.imagen.add_controller(
-            self.gesto_arrastre
-        )
+        self.gesto_arrastre.connect("drag-begin", self.arrastre_iniciado)
+        self.gesto_arrastre.connect("drag-update", self.arrastre_actualizado)
+        self.gesto_arrastre.connect("drag-end", self.arrastre_terminado)
+        self.imagen.add_controller(self.gesto_arrastre)
 
-        self.area_preview.connect(
-            "notify::width",
-            self.recalcular_lienzo
-        )
-
-        self.area_preview.connect(
-            "notify::height",
-            self.recalcular_lienzo
-        )
+        self.area_preview.connect("notify::width", self.recalcular_lienzo)
+        self.area_preview.connect("notify::height", self.recalcular_lienzo)
 
         # ============================================================
         # TIRA DE MINIATURAS (MODO CARRUSEL)
         # ============================================================
 
         self.scroll_carrusel = Gtk.ScrolledWindow()
+        self.scroll_carrusel.add_css_class("carrusel-strip")
         self.scroll_carrusel.set_policy(
             Gtk.PolicyType.AUTOMATIC,
             Gtk.PolicyType.NEVER
@@ -345,178 +744,137 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         )
         self.caja_tira.set_margin_start(12)
         self.caja_tira.set_margin_end(12)
-        self.caja_tira.set_margin_top(4)
-        self.caja_tira.set_margin_bottom(4)
+        self.caja_tira.set_margin_top(6)
+        self.caja_tira.set_margin_bottom(6)
 
         self.scroll_carrusel.set_child(self.caja_tira)
         principal.append(self.scroll_carrusel)
 
         # ============================================================
-        # PANEL INFERIOR
+        # DOCK INFERIOR (TARJETAS DE CONTROL)
         # ============================================================
 
-        separador = Gtk.Separator(
-            orientation=Gtk.Orientation.HORIZONTAL
+        dock_inferior = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=8
         )
+        principal.append(dock_inferior)
 
-        principal.append(separador)
-
-        panel = Gtk.Box(
+        # ------------------------------------------------------------
+        # TARJETA 1: MODO Y COMPOSICIÓN
+        # ------------------------------------------------------------
+        dock_modo = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=18
+            spacing=14
         )
+        dock_modo.add_css_class("card-dock")
+        dock_inferior.append(dock_modo)
 
-        principal.append(panel)
+        lbl_modo = Gtk.Label(label="Modo:")
+        lbl_modo.add_css_class("dock-label")
+        dock_modo.append(lbl_modo)
 
-        panel.append(
-            Gtk.Label(label="Modo:")
-        )
+        caja_seg = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        caja_seg.add_css_class("segmented-box")
+        caja_seg.add_css_class("linked")
 
-        self.modo_blur = Gtk.CheckButton(
-            label="Ajustar + Blur"
-        )
-
-        self.modo_recortar = Gtk.CheckButton(
-            label="Recortar"
-        )
-
-        self.modo_color = Gtk.CheckButton(
-            label="Ajustar + Color"
-        )
-
-        self.modo_recortar.set_group(
-            self.modo_blur
-        )
-
-        self.modo_color.set_group(
-            self.modo_blur
-        )
-
+        self.modo_blur = Gtk.ToggleButton(label="Ajustar + Blur")
+        self.modo_recortar = Gtk.ToggleButton(label="Recortar")
+        self.modo_retrato = Gtk.ToggleButton(label="Modo Retrato")
+        self.modo_recortar.set_group(self.modo_blur)
+        self.modo_retrato.set_group(self.modo_blur)
         self.modo_blur.set_active(True)
 
         self.modo_blur.connect("toggled", self.modo_cambiado)
         self.modo_recortar.connect("toggled", self.modo_cambiado)
+        self.modo_retrato.connect("toggled", self.modo_cambiado)
 
-        # Blur ya funciona.
-        self.modo_blur.set_sensitive(True)
+        caja_seg.append(self.modo_blur)
+        caja_seg.append(self.modo_recortar)
+        caja_seg.append(self.modo_retrato)
+        dock_modo.append(caja_seg)
 
-        # Los otros dos todavía no.
-        self.modo_recortar.set_sensitive(True)
-        self.modo_color.set_sensitive(False)
+        # Indicador IA (spinner y badge para detección en segundo plano)
+        self.spinner_ia = Gtk.Spinner()
+        self.spinner_ia.set_visible(False)
+        self.lbl_estado_ia = Gtk.Label(label="")
+        self.lbl_estado_ia.add_css_class("badge-ia")
+        self.lbl_estado_ia.set_visible(False)
+        dock_modo.append(self.spinner_ia)
+        dock_modo.append(self.lbl_estado_ia)
 
-        panel.append(self.modo_blur)
-        panel.append(self.modo_recortar)
-        panel.append(self.modo_color)
+        sep_dm1 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        dock_modo.append(sep_dm1)
+
+        lbl_blur = Gtk.Label(label="Blur:")
+        lbl_blur.add_css_class("dock-label")
+        dock_modo.append(lbl_blur)
 
         self.blur_valor = 50
-
-        self.blur_ajuste = Gtk.Adjustment(
-            value=50,
-            lower=0,
-            upper=100,
-            step_increment=1,
-            page_increment=10,
-            page_size=0
-        )
-
-        self.blur_slider = Gtk.Scale(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            adjustment=self.blur_ajuste
-        )
-
-        self.blur_slider.set_size_request(180, -1)
+        self.blur_ajuste = Gtk.Adjustment(value=50, lower=0, upper=100, step_increment=1, page_increment=10, page_size=0)
+        self.blur_slider = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.blur_ajuste)
+        self.blur_slider.set_size_request(160, -1)
         self.blur_slider.set_draw_value(True)
         self.blur_slider.set_digits(0)
-
-        self.blur_slider.connect(
-            "value-changed",
-            self.blur_cambiado
-        )
-
+        self.blur_slider.connect("value-changed", self.blur_cambiado)
         gesto_blur = Gtk.GestureDrag()
         gesto_blur.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         gesto_blur.connect("drag-begin", self._slider_drag_begin)
         gesto_blur.connect("drag-end", self._slider_drag_end)
         self.blur_slider.add_controller(gesto_blur)
+        dock_modo.append(self.blur_slider)
 
-        panel.append(Gtk.Label(label="Blur:"))
-        panel.append(self.blur_slider)
+        sep_dm2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        dock_modo.append(sep_dm2)
 
         self.zoom_label = Gtk.Label(label="Zoom:")
-        self.zoom_ajuste = Gtk.Adjustment(
-            value=100,
-            lower=100,
-            upper=300,
-            step_increment=1,
-            page_increment=10,
-            page_size=0
-        )
-        self.zoom_slider = Gtk.Scale(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            adjustment=self.zoom_ajuste
-        )
-        self.zoom_slider.set_size_request(180, -1)
+        self.zoom_label.add_css_class("dock-label")
+        self.zoom_ajuste = Gtk.Adjustment(value=100, lower=100, upper=300, step_increment=1, page_increment=10, page_size=0)
+        self.zoom_slider = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.zoom_ajuste)
+        self.zoom_slider.set_size_request(160, -1)
         self.zoom_slider.set_draw_value(True)
         self.zoom_slider.set_digits(0)
-        self.zoom_slider.connect(
-            "value-changed",
-            self.zoom_cambiado
-        )
-
+        self.zoom_slider.connect("value-changed", self.zoom_cambiado)
         gesto_zoom = Gtk.GestureDrag()
         gesto_zoom.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         gesto_zoom.connect("drag-begin", self._slider_drag_begin)
         gesto_zoom.connect("drag-end", self._slider_drag_end)
         self.zoom_slider.add_controller(gesto_zoom)
 
-        self.boton_centrar = Gtk.Button(
-            label="Centrar"
-        )
-        self.boton_centrar.connect(
-            "clicked",
-            self.centrar_recorte
-        )
+        self.boton_centrar = Gtk.Button(label="Centrar")
+        self.boton_centrar.connect("clicked", self.centrar_recorte)
 
         self.zoom_label.set_sensitive(False)
         self.zoom_slider.set_sensitive(False)
         self.boton_centrar.set_sensitive(False)
 
-        panel.append(self.zoom_label)
-        panel.append(self.zoom_slider)
-        panel.append(self.boton_centrar)
+        dock_modo.append(self.zoom_label)
+        dock_modo.append(self.zoom_slider)
+        dock_modo.append(self.boton_centrar)
 
-        espacio = Gtk.Box()
-        espacio.set_hexpand(True)
+        espacio_modo = Gtk.Box()
+        espacio_modo.set_hexpand(True)
+        dock_modo.append(espacio_modo)
 
-        panel.append(espacio)
-
-        self.boton_exportar = Gtk.Button(
-            label="Exportar"
-        )
-
+        self.boton_exportar = Gtk.Button(label="Exportar")
+        self.boton_exportar.add_css_class("btn-exportar-principal")
         self.boton_exportar.set_sensitive(False)
+        self.boton_exportar.connect("clicked", self.exportar_click)
+        dock_modo.append(self.boton_exportar)
 
-        self.boton_exportar.connect(
-            "clicked",
-            self.exportar_click
-        )
-
-        panel.append(self.boton_exportar)
-
-        # ============================================================
-        # PANEL DE RETOQUES (BRILLO, CONTRASTE, SATURACIÓN)
-        # ============================================================
-
-        panel_ajustes = Gtk.Box(
+        # ------------------------------------------------------------
+        # TARJETA 2: RETOQUE Y COLOR
+        # ------------------------------------------------------------
+        dock_retoque = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=14
         )
+        dock_retoque.add_css_class("card-dock")
+        dock_inferior.append(dock_retoque)
 
-        principal.append(panel_ajustes)
-
-        panel_ajustes.append(
-            Gtk.Label(label="Retoque:")
-        )
+        lbl_retoque = Gtk.Label(label="Retoque:")
+        lbl_retoque.add_css_class("dock-label")
+        dock_retoque.append(lbl_retoque)
 
         self.selector_presets = Gtk.DropDown.new_from_strings(
             list(PRESETS_RETOQUE.keys())
@@ -524,85 +882,49 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         self.selector_presets.set_selected(0)
         self.selector_presets.set_sensitive(False)
         self.selector_presets.set_tooltip_text("Estilos y filtros de retoque rápido")
-        self.selector_presets.connect(
-            "notify::selected",
-            self.preset_cambiado
-        )
-        panel_ajustes.append(self.selector_presets)
+        self.selector_presets.connect("notify::selected", self.preset_cambiado)
+        dock_retoque.append(self.selector_presets)
 
-        # Brillo (-100 a +100, defecto 0)
-        self.brillo_ajuste = Gtk.Adjustment(
-            value=0,
-            lower=-100,
-            upper=100,
-            step_increment=1,
-            page_increment=10,
-            page_size=0
-        )
-        self.brillo_slider = Gtk.Scale(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            adjustment=self.brillo_ajuste
-        )
+        sep_dr1 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        dock_retoque.append(sep_dr1)
+
+        # Brillo
+        lbl_b = Gtk.Label(label="Brillo:")
+        lbl_b.add_css_class("dock-label")
+        dock_retoque.append(lbl_b)
+        self.brillo_ajuste = Gtk.Adjustment(value=0, lower=-100, upper=100, step_increment=1, page_increment=10, page_size=0)
+        self.brillo_slider = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.brillo_ajuste)
         self.brillo_slider.set_size_request(130, -1)
         self.brillo_slider.set_draw_value(True)
         self.brillo_slider.set_digits(0)
-        self.brillo_slider.connect(
-            "value-changed",
-            self.brillo_cambiado
-        )
+        self.brillo_slider.connect("value-changed", self.brillo_cambiado)
+        dock_retoque.append(self.brillo_slider)
 
-        panel_ajustes.append(Gtk.Label(label="Brillo:"))
-        panel_ajustes.append(self.brillo_slider)
-
-        # Contraste (-100 a +100, defecto 0)
-        self.contraste_ajuste = Gtk.Adjustment(
-            value=0,
-            lower=-100,
-            upper=100,
-            step_increment=1,
-            page_increment=10,
-            page_size=0
-        )
-        self.contraste_slider = Gtk.Scale(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            adjustment=self.contraste_ajuste
-        )
+        # Contraste
+        lbl_c = Gtk.Label(label="Contraste:")
+        lbl_c.add_css_class("dock-label")
+        dock_retoque.append(lbl_c)
+        self.contraste_ajuste = Gtk.Adjustment(value=0, lower=-100, upper=100, step_increment=1, page_increment=10, page_size=0)
+        self.contraste_slider = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.contraste_ajuste)
         self.contraste_slider.set_size_request(130, -1)
         self.contraste_slider.set_draw_value(True)
         self.contraste_slider.set_digits(0)
-        self.contraste_slider.connect(
-            "value-changed",
-            self.contraste_cambiado
-        )
+        self.contraste_slider.connect("value-changed", self.contraste_cambiado)
+        dock_retoque.append(self.contraste_slider)
 
-        panel_ajustes.append(Gtk.Label(label="Contraste:"))
-        panel_ajustes.append(self.contraste_slider)
-
-        # Saturación (-100 a +100, defecto 0)
-        self.saturacion_ajuste = Gtk.Adjustment(
-            value=0,
-            lower=-100,
-            upper=100,
-            step_increment=1,
-            page_increment=10,
-            page_size=0
-        )
-        self.saturacion_slider = Gtk.Scale(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            adjustment=self.saturacion_ajuste
-        )
+        # Saturación
+        lbl_s = Gtk.Label(label="Saturación:")
+        lbl_s.add_css_class("dock-label")
+        dock_retoque.append(lbl_s)
+        self.saturacion_ajuste = Gtk.Adjustment(value=0, lower=-100, upper=100, step_increment=1, page_increment=10, page_size=0)
+        self.saturacion_slider = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.saturacion_ajuste)
         self.saturacion_slider.set_size_request(130, -1)
         self.saturacion_slider.set_draw_value(True)
         self.saturacion_slider.set_digits(0)
-        self.saturacion_slider.connect(
-            "value-changed",
-            self.saturacion_cambiado
-        )
+        self.saturacion_slider.connect("value-changed", self.saturacion_cambiado)
+        dock_retoque.append(self.saturacion_slider)
 
-        panel_ajustes.append(Gtk.Label(label="Saturación:"))
-        panel_ajustes.append(self.saturacion_slider)
-
-        # Gestos de arrastre para registrar 1 solo paso al soltar
+        # Gestos de arrastre
         for s in (self.brillo_slider, self.contraste_slider, self.saturacion_slider):
             gesto = Gtk.GestureDrag()
             gesto.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -610,18 +932,15 @@ class EffectPicWindow(Gtk.ApplicationWindow):
             gesto.connect("drag-end", self._slider_drag_end)
             s.add_controller(gesto)
 
-        self.boton_reset_ajustes = Gtk.Button(
-            label="Reiniciar retoques"
-        )
-        self.boton_reset_ajustes.set_tooltip_text(
-            "Restablecer brillo, contraste y saturación a 0"
-        )
+        espacio_retoque = Gtk.Box()
+        espacio_retoque.set_hexpand(True)
+        dock_retoque.append(espacio_retoque)
+
+        self.boton_reset_ajustes = Gtk.Button(label="Reiniciar retoques")
+        self.boton_reset_ajustes.set_tooltip_text("Restablecer brillo, contraste y saturación a 0")
         self.boton_reset_ajustes.set_sensitive(False)
-        self.boton_reset_ajustes.connect(
-            "clicked",
-            self.reiniciar_ajustes_color
-        )
-        panel_ajustes.append(self.boton_reset_ajustes)
+        self.boton_reset_ajustes.connect("clicked", self.reiniciar_ajustes_color)
+        dock_retoque.append(self.boton_reset_ajustes)
 
         # ============================================================
         # ATAJOS DE TECLADO Y ACCIONES (DESHACER / REHACER)
@@ -807,9 +1126,10 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         self.boton_comparar.set_active(False)
         self.generar_preview_original()
 
-        self.boton_exportar.set_sensitive(True)
-        self.actualizar_sensibilidad_undo_redo()
-        self.actualizar_interfaz_carrusel()
+        if hasattr(self, "caja_vacia"):
+            self.caja_vacia.set_visible(False)
+        if hasattr(self, "marco"):
+            self.marco.set_visible(True)
 
         if len(self.carrusel) > 1:
             self.set_title(
@@ -817,6 +1137,23 @@ class EffectPicWindow(Gtk.ApplicationWindow):
             )
         else:
             self.set_title(f"EffectPic — {self.carrusel[0].nombre}")
+
+        self.boton_exportar.set_sensitive(True)
+        self.actualizar_sensibilidad_undo_redo()
+        self.actualizar_interfaz_carrusel()
+
+    def _archivos_soltados(self, target, value, x, y):
+        if isinstance(value, Gdk.FileList):
+            archivos = value.get_files()
+            rutas = [f.get_path() for f in archivos if f.get_path()]
+            rutas_validas = [
+                r for r in rutas
+                if os.path.isfile(r) and r.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+            ]
+            if rutas_validas:
+                self.cargar_carrusel(rutas_validas)
+                return True
+        return False
 
     def seleccionar_item_carrusel(self, nuevo_indice):
         if nuevo_indice == self.indice_activo or not (0 <= nuevo_indice < len(self.carrusel)):
@@ -837,6 +1174,22 @@ class EffectPicWindow(Gtk.ApplicationWindow):
             self.info.set_text(f"Original: {ancho} × {alto} px")
         except Exception:
             pass
+
+        # Gestión del estado de IA al cambiar de foto
+        if hasattr(self, "modo_retrato") and self.modo_retrato.get_active():
+            if self.carrusel[nuevo_indice].mascara_sujeto is None:
+                self.iniciar_deteccion_sujeto(self.carrusel[nuevo_indice])
+            else:
+                self.spinner_ia.stop()
+                self.spinner_ia.set_visible(False)
+                self.lbl_estado_ia.remove_css_class("badge-ia")
+                self.lbl_estado_ia.add_css_class("badge-ia-ready")
+                self.lbl_estado_ia.set_text("IA lista")
+                self.lbl_estado_ia.set_visible(True)
+        elif hasattr(self, "spinner_ia"):
+            self.spinner_ia.stop()
+            self.spinner_ia.set_visible(False)
+            self.lbl_estado_ia.set_visible(False)
 
         self.generar_preview()
         self.boton_comparar.set_active(False)
@@ -887,11 +1240,16 @@ class EffectPicWindow(Gtk.ApplicationWindow):
             if not self.carrusel:
                 self.ruta_actual = None
                 self.scroll_carrusel.set_visible(False)
+                if hasattr(self, "caja_vacia"):
+                    self.caja_vacia.set_visible(True)
+                if hasattr(self, "marco"):
+                    self.marco.set_visible(False)
                 self.info.set_text("Ninguna imagen abierta")
                 self.set_title("EffectPic")
                 self.boton_exportar.set_sensitive(False)
                 self.boton_exportar.set_label("Exportar")
                 self.imagen.set_filename(None)
+                self.actualizar_sensibilidad_undo_redo()
                 return
             else:
                 self.indice_activo = max(0, min(indice, len(self.carrusel) - 1))
@@ -960,6 +1318,9 @@ class EffectPicWindow(Gtk.ApplicationWindow):
                 orientation=Gtk.Orientation.VERTICAL,
                 spacing=4
             )
+            tarjeta.add_css_class("carrusel-card")
+            if i == self.indice_activo:
+                tarjeta.add_css_class("carrusel-card-active")
             tarjeta.set_margin_start(4)
             tarjeta.set_margin_end(4)
 
@@ -1129,25 +1490,120 @@ class EffectPicWindow(Gtk.ApplicationWindow):
     # ================================================================
 
     def modo_cambiado(self, boton):
-
-        # Los botones agrupados disparan "toggled" tanto al
-        # activarse como al desactivarse.
         if not boton.get_active():
             return
 
         es_recorte = self.modo_recortar.get_active()
-        self.zoom_label.set_sensitive(es_recorte)
-        self.zoom_slider.set_sensitive(es_recorte)
-        self.boton_centrar.set_sensitive(es_recorte)
+        es_retrato = self.modo_retrato.get_active()
+
+        self.zoom_label.set_sensitive(es_recorte or es_retrato)
+        self.zoom_slider.set_sensitive(es_recorte or es_retrato)
+        self.boton_centrar.set_sensitive(es_recorte or es_retrato)
 
         self.blur_slider.set_sensitive(
-            self.modo_blur.get_active()
+            self.modo_blur.get_active() or es_retrato
         )
+
+        if es_retrato and self.ruta_actual and self.carrusel and (0 <= self.indice_activo < len(self.carrusel)):
+            item_actual = self.carrusel[self.indice_activo]
+            if item_actual.mascara_sujeto is None:
+                self.iniciar_deteccion_sujeto(item_actual)
+            else:
+                self.spinner_ia.stop()
+                self.spinner_ia.set_visible(False)
+                self.lbl_estado_ia.remove_css_class("badge-ia")
+                self.lbl_estado_ia.add_css_class("badge-ia-ready")
+                self.lbl_estado_ia.set_text("IA lista")
+                self.lbl_estado_ia.set_visible(True)
+        elif not es_retrato:
+            self.spinner_ia.stop()
+            self.spinner_ia.set_visible(False)
+            self.lbl_estado_ia.set_visible(False)
 
         if self.ruta_actual:
             self.generar_preview()
 
         self.registrar_cambio()
+
+    def iniciar_deteccion_sujeto(self, item):
+        """
+        Inicia la detección del sujeto en segundo plano con rembg (u2net en CPU).
+        Incrementa el contador de secuencia para descartar resultados obsoletos
+        si el usuario cambia de imagen durante la inferencia.
+        """
+        self._secuencia_deteccion += 1
+        seq = self._secuencia_deteccion
+
+        self.spinner_ia.start()
+        self.spinner_ia.set_visible(True)
+        self.lbl_estado_ia.remove_css_class("badge-ia-ready")
+        self.lbl_estado_ia.add_css_class("badge-ia")
+        self.lbl_estado_ia.set_text("IA detectando sujeto...")
+        self.lbl_estado_ia.set_visible(True)
+
+        hilo = threading.Thread(
+            target=self._hilo_detectar_sujeto,
+            args=(item, seq, item.ruta),
+            daemon=True
+        )
+        hilo.start()
+
+    def _hilo_detectar_sujeto(self, item, seq, ruta):
+        try:
+            import rembg
+            session = obtener_sesion_rembg(modelo="u2net")
+            with Image.open(ruta) as img:
+                img = ImageOps.exif_transpose(img).convert("RGB")
+                # only_mask=True produce máscara PIL en escala de grises modo 'L' (1 byte/px)
+                mascara = rembg.remove(img, session=session, only_mask=True)
+            GLib.idle_add(self._on_sujeto_detectado, item, mascara, seq)
+        except Exception as e:
+            GLib.idle_add(self._on_sujeto_error, item, str(e), seq)
+
+    def _on_sujeto_detectado(self, item, mascara, seq):
+        # 1. Guardamos la máscara en el item para reutilización
+        item.mascara_sujeto = mascara
+
+        # 2. Descartamos actualización de UI si el usuario cambió de foto
+        # o si la secuencia ya no coincide con la última solicitada
+        if not self.carrusel or not (0 <= self.indice_activo < len(self.carrusel)):
+            return False
+        if self.carrusel[self.indice_activo] is not item:
+            return False
+        if seq != self._secuencia_deteccion:
+            return False
+
+        self.spinner_ia.stop()
+        self.spinner_ia.set_visible(False)
+        self.lbl_estado_ia.remove_css_class("badge-ia")
+        self.lbl_estado_ia.add_css_class("badge-ia-ready")
+        self.lbl_estado_ia.set_text("IA lista")
+        self.lbl_estado_ia.set_visible(True)
+
+        if self.modo_retrato.get_active():
+            self.generar_preview()
+
+        return False
+
+    def _on_sujeto_error(self, item, error_msg, seq):
+        print(f"Error en detección de sujeto: {error_msg}")
+        if seq == self._secuencia_deteccion:
+            self.spinner_ia.stop()
+            self.spinner_ia.set_visible(False)
+            self.lbl_estado_ia.remove_css_class("badge-ia-ready")
+            self.lbl_estado_ia.add_css_class("badge-ia")
+            err_lower = error_msg.lower()
+            if "rembg" in err_lower or "no module" in err_lower:
+                self.lbl_estado_ia.set_text("Instalar rembg")
+                self.lbl_estado_ia.set_tooltip_text("Falta rembg. Ejecuta ./run_effectpic.sh para configurar el entorno.")
+            elif "download" in err_lower or "connection" in err_lower or "network" in err_lower:
+                self.lbl_estado_ia.set_text("Sin conexión")
+                self.lbl_estado_ia.set_tooltip_text("No se pudo descargar el modelo en primer uso. Las funciones normales siguen disponibles.")
+            else:
+                self.lbl_estado_ia.set_text("Error IA")
+                self.lbl_estado_ia.set_tooltip_text(f"Error recuperable: {error_msg}. Las funciones normales siguen disponibles.")
+            self.lbl_estado_ia.set_visible(True)
+        return False
 
     def zoom_cambiado(self, slider):
 
@@ -1157,7 +1613,7 @@ class EffectPicWindow(Gtk.ApplicationWindow):
 
         if (
             self.ruta_actual
-            and self.modo_recortar.get_active()
+            and (self.modo_recortar.get_active() or self.modo_retrato.get_active())
         ):
             self.generar_preview()
 
@@ -1178,7 +1634,7 @@ class EffectPicWindow(Gtk.ApplicationWindow):
 
         if (
             self.ruta_actual
-            and self.modo_recortar.get_active()
+            and (self.modo_recortar.get_active() or self.modo_retrato.get_active())
         ):
             self.generar_preview()
 
@@ -1191,7 +1647,7 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         y
     ):
 
-        if not self.modo_recortar.get_active():
+        if not (self.modo_recortar.get_active() or self.modo_retrato.get_active()):
             return
 
         self.drag_offset_x = self.offset_x
@@ -1204,7 +1660,7 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         desplazamiento_y
     ):
 
-        if not self.modo_recortar.get_active():
+        if not (self.modo_recortar.get_active() or self.modo_retrato.get_active()):
             return
 
         ancho = self.imagen.get_width()
@@ -1214,7 +1670,6 @@ class EffectPicWindow(Gtk.ApplicationWindow):
             return
 
         # Arrastramos la FOTO, no la ventana de recorte.
-        # Por eso invertimos el sentido respecto del crop.
         nuevo_x = (
             self.drag_offset_x
             - (desplazamiento_x / ancho) * 2
@@ -1237,7 +1692,7 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         offset_y
     ):
 
-        if not self.modo_recortar.get_active():
+        if not (self.modo_recortar.get_active() or self.modo_retrato.get_active()):
             return
 
         self.registrar_cambio()
@@ -1248,7 +1703,7 @@ class EffectPicWindow(Gtk.ApplicationWindow):
 
         if (
             self.ruta_actual
-            and self.modo_blur.get_active()
+            and (self.modo_blur.get_active() or self.modo_retrato.get_active())
         ):
             self.generar_preview()
 
@@ -1405,9 +1860,16 @@ class EffectPicWindow(Gtk.ApplicationWindow):
     # ================================================================
 
     def obtener_estado_actual(self):
+        if self.modo_retrato.get_active():
+            modo = "retrato"
+        elif self.modo_recortar.get_active():
+            modo = "recortar"
+        else:
+            modo = "blur"
+
         return {
             "formato_idx": self.selector.get_selected(),
-            "modo": "recortar" if self.modo_recortar.get_active() else "blur",
+            "modo": modo,
             "blur_valor": round(float(self.blur_ajuste.get_value()), 2),
             "zoom": round(float(self.zoom_ajuste.get_value()), 2),
             "offset_x": round(float(self.offset_x), 4),
@@ -1452,18 +1914,24 @@ class EffectPicWindow(Gtk.ApplicationWindow):
                 self.recalcular_lienzo()
 
             # 2. Modo
-            es_recorte = (estado["modo"] == "recortar")
-            if es_recorte:
+            modo = estado.get("modo", "blur")
+            if modo == "recortar":
                 if not self.modo_recortar.get_active():
                     self.modo_recortar.set_active(True)
+            elif modo == "retrato":
+                if not self.modo_retrato.get_active():
+                    self.modo_retrato.set_active(True)
             else:
                 if not self.modo_blur.get_active():
                     self.modo_blur.set_active(True)
 
-            self.zoom_label.set_sensitive(es_recorte)
-            self.zoom_slider.set_sensitive(es_recorte)
-            self.boton_centrar.set_sensitive(es_recorte)
-            self.blur_slider.set_sensitive(not es_recorte)
+            es_recorte = (modo == "recortar")
+            es_retrato = (modo == "retrato")
+
+            self.zoom_label.set_sensitive(es_recorte or es_retrato)
+            self.zoom_slider.set_sensitive(es_recorte or es_retrato)
+            self.boton_centrar.set_sensitive(es_recorte or es_retrato)
+            self.blur_slider.set_sensitive(modo != "recortar")
 
             # 3. Blur
             self.blur_valor = estado["blur_valor"]
@@ -1688,18 +2156,16 @@ class EffectPicWindow(Gtk.ApplicationWindow):
         )
 
     def generar_imagen_para_item(self, item, ancho_salida, alto_salida):
-        with Image.open(item.ruta) as original:
-            original = ImageOps.exif_transpose(original).convert("RGB")
-            original = self._aplicar_mejoras_valores(
-                original,
-                item.brillo,
-                item.contraste,
-                item.saturacion
-            )
+        if item.modo == "recortar":
+            with Image.open(item.ruta) as original:
+                original = ImageOps.exif_transpose(original).convert("RGB")
+                original = self._aplicar_mejoras_valores(
+                    original,
+                    item.brillo,
+                    item.contraste,
+                    item.saturacion
+                )
 
-            tamaño_salida = (ancho_salida, alto_salida)
-
-            if item.modo == "recortar":
                 ow, oh = original.size
                 escala_base = max(ancho_salida / ow, alto_salida / oh)
                 zoom_factor = max(1.0, item.zoom / 100.0)
@@ -1724,7 +2190,44 @@ class EffectPicWindow(Gtk.ApplicationWindow):
 
                 return redimensionada.crop((x, y, x + ancho_salida, y + alto_salida))
 
-            else:  # "blur"
+        elif item.modo == "retrato":
+            mascara = item.mascara_sujeto
+            if mascara is None:
+                try:
+                    import rembg
+                    session = obtener_sesion_rembg(modelo="u2net")
+                    with Image.open(item.ruta) as img_orig:
+                        img_orig = ImageOps.exif_transpose(img_orig).convert("RGB")
+                        mascara = rembg.remove(img_orig, session=session, only_mask=True)
+                        item.mascara_sujeto = mascara
+                except Exception as e_ia:
+                    print(f"Error calculando máscara IA para item {item.nombre}: {e_ia}")
+
+            return self.generar_imagen_retrato(
+                item.ruta,
+                ancho_salida,
+                alto_salida,
+                mascara=mascara,
+                blur_valor=item.blur_valor,
+                zoom=item.zoom,
+                offset_x=item.offset_x,
+                offset_y=item.offset_y,
+                brillo=item.brillo,
+                contraste=item.contraste,
+                saturacion=item.saturacion
+            )
+
+        else:  # "blur"
+            with Image.open(item.ruta) as original:
+                original = ImageOps.exif_transpose(original).convert("RGB")
+                original = self._aplicar_mejoras_valores(
+                    original,
+                    item.brillo,
+                    item.contraste,
+                    item.saturacion
+                )
+
+                tamaño_salida = (ancho_salida, alto_salida)
                 fondo = ImageOps.fit(
                     original,
                     tamaño_salida,
@@ -1751,6 +2254,83 @@ class EffectPicWindow(Gtk.ApplicationWindow):
                 fondo.paste(principal, (px, py))
 
                 return fondo
+
+    def generar_imagen_retrato(
+        self,
+        ruta,
+        ancho_salida,
+        alto_salida,
+        mascara=None,
+        blur_valor=50.0,
+        zoom=100.0,
+        offset_x=0.0,
+        offset_y=0.0,
+        brillo=0.0,
+        contraste=0.0,
+        saturacion=0.0
+    ):
+        """
+        Genera la imagen en Modo Retrato combinando:
+        1. Sujeto nítido en primer plano según la máscara 'L' de rembg (u2net).
+        2. Fondo desenfocado mediante GaussianBlur proporcional al tamaño del lienzo.
+        3. Recorte/zoom interactivo coordinado con idéntica geometría en foto y máscara.
+        """
+        with Image.open(ruta) as original:
+            original = ImageOps.exif_transpose(original).convert("RGB")
+            original = self._aplicar_mejoras_valores(
+                original,
+                brillo,
+                contraste,
+                saturacion
+            )
+
+            ow, oh = original.size
+            escala_base = max(ancho_salida / ow, alto_salida / oh)
+            zoom_factor = max(1.0, zoom / 100.0)
+            escala = escala_base * zoom_factor
+
+            nuevo_ancho = max(ancho_salida, round(ow * escala))
+            nuevo_alto = max(alto_salida, round(oh * escala))
+
+            redim_img = original.resize(
+                (nuevo_ancho, nuevo_alto),
+                resample=Image.Resampling.LANCZOS
+            )
+
+            sobrante_x = nuevo_ancho - ancho_salida
+            sobrante_y = nuevo_alto - alto_salida
+
+            x = int(sobrante_x * (offset_x + 1.0) / 2.0) if sobrante_x > 0 else 0
+            y = int(sobrante_y * (offset_y + 1.0) / 2.0) if sobrante_y > 0 else 0
+
+            x = max(0, min(sobrante_x, x))
+            y = max(0, min(sobrante_y, y))
+
+            crop_img = redim_img.crop((x, y, x + ancho_salida, y + alto_salida))
+
+            # Si la máscara de IA todavía no está calculada, devolvemos la imagen encuadrada
+            if mascara is None:
+                return crop_img
+
+            # La máscara se escala y recorta con la misma geometría exacta
+            redim_mask = mascara.resize(
+                (nuevo_ancho, nuevo_alto),
+                resample=Image.Resampling.BILINEAR
+            )
+            crop_mask = redim_mask.crop((x, y, x + ancho_salida, y + alto_salida))
+
+            # Escalar el radio del blur proporcionalmente a la resolución de salida
+            intensidad = blur_valor / 100.0
+            radio_blur = intensidad * (min(ancho_salida, alto_salida) * 0.06)
+
+            if radio_blur > 0:
+                fondo_blur = crop_img.filter(ImageFilter.GaussianBlur(radius=radio_blur))
+                # Leve oscurecimiento sutil para separar al sujeto del fondo
+                capa_oscura = Image.new("RGB", (ancho_salida, alto_salida), (0, 0, 0))
+                fondo_blur = Image.blend(fondo_blur, capa_oscura, 0.04 * intensidad)
+                return Image.composite(crop_img, fondo_blur, crop_mask)
+            else:
+                return crop_img
 
     def generar_imagen_blur(
         self,
@@ -1933,6 +2513,22 @@ class EffectPicWindow(Gtk.ApplicationWindow):
                     self.ruta_actual,
                     ancho_salida,
                     alto_salida
+                )
+            elif self.modo_retrato.get_active():
+                item_activo = self.carrusel[self.indice_activo] if self.carrusel and (0 <= self.indice_activo < len(self.carrusel)) else None
+                mascara = item_activo.mascara_sujeto if item_activo else None
+                resultado = self.generar_imagen_retrato(
+                    self.ruta_actual,
+                    ancho_salida,
+                    alto_salida,
+                    mascara=mascara,
+                    blur_valor=self.blur_valor,
+                    zoom=self.zoom_ajuste.get_value(),
+                    offset_x=self.offset_x,
+                    offset_y=self.offset_y,
+                    brillo=self.brillo_valor,
+                    contraste=self.contraste_valor,
+                    saturacion=self.saturacion_valor
                 )
             else:
                 resultado = self.generar_imagen_blur(
@@ -2159,6 +2755,34 @@ class EffectPicWindow(Gtk.ApplicationWindow):
                     self.ruta_actual,
                     ancho_salida,
                     alto_salida
+                )
+            elif self.modo_retrato.get_active():
+                item_activo = self.carrusel[self.indice_activo] if self.carrusel and (0 <= self.indice_activo < len(self.carrusel)) else None
+                mascara = item_activo.mascara_sujeto if item_activo else None
+                if mascara is None:
+                    try:
+                        import rembg
+                        session = obtener_sesion_rembg(modelo="u2net")
+                        with Image.open(self.ruta_actual) as img_orig:
+                            img_orig = ImageOps.exif_transpose(img_orig).convert("RGB")
+                            mascara = rembg.remove(img_orig, session=session, only_mask=True)
+                            if item_activo:
+                                item_activo.mascara_sujeto = mascara
+                    except Exception as e_ia:
+                        print(f"Error calculando máscara IA en exportación: {e_ia}")
+
+                resultado_final = self.generar_imagen_retrato(
+                    self.ruta_actual,
+                    ancho_salida,
+                    alto_salida,
+                    mascara=mascara,
+                    blur_valor=self.blur_valor,
+                    zoom=self.zoom_ajuste.get_value(),
+                    offset_x=self.offset_x,
+                    offset_y=self.offset_y,
+                    brillo=self.brillo_valor,
+                    contraste=self.contraste_valor,
+                    saturacion=self.saturacion_valor
                 )
             else:
                 resultado_final = self.generar_imagen_blur(

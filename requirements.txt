@@ -1,0 +1,11 @@
+# Dependencias verificadas y fijadas para inferencia local en CPU con EffectPic
+# Probado en Ubuntu 24.04 LTS (x86_64, Python 3.12)
+rembg==2.0.85
+onnxruntime==1.30.0
+pillow==12.3.0
+numpy==2.5.3
+scipy==1.18.1
+numba==0.67.0
+llvmlite==0.49.0
+PyMatting==1.1.16
+pooch==1.9.0
