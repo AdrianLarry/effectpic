@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#090d16"/>
+    </linearGradient>
+
+    <!-- Border Glow Gradient -->
+    <linearGradient id="borderGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0.1"/>
+    </linearGradient>
+
+    <!-- Aperture Blade Gradient 1 -->
+    <linearGradient id="bladeGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+
+    <!-- Aperture Blade Gradient 2 -->
+    <linearGradient id="bladeGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+
+    <!-- Center Glow -->
+    <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8"/>
+      <stop offset="40%" stop-color="#6366f1" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Bokeh Soft Radial Gradients -->
+    <radialGradient id="bokeh1" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ec4899" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ec4899" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="bokeh2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="lensGlass" cx="35%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="40%" stop-color="#38bdf8" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#020617" stop-opacity="0.7"/>
+    </radialGradient>
+
+    <!-- Drop Shadow Filter -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <!-- Base Squircle with Shadow -->
+  <rect x="28" y="28" width="456" height="456" rx="104" fill="url(#bgGradient)" filter="url(#shadow)"/>
+  <rect x="28" y="28" width="456" height="456" rx="104" stroke="url(#borderGradient)" stroke-width="4" fill="none"/>
+
+  <!-- Bokeh Atmospheric Circles -->
+  <circle cx="140" cy="140" r="80" fill="url(#bokeh1)"/>
+  <circle cx="380" cy="350" r="95" fill="url(#bokeh2)"/>
+  <circle cx="360" cy="160" r="60" fill="url(#bokeh1)" opacity="0.6"/>
+  <circle cx="150" cy="360" r="70" fill="url(#bokeh2)" opacity="0.5"/>
+
+  <!-- Composition & Framing Crop Guides -->
+  <!-- Top-Left Bracket -->
+  <path d="M110 160 V122 C110 115 115 110 122 110 H160" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.75"/>
+  <!-- Top-Right Bracket -->
+  <path d="M352 110 H390 C397 110 402 115 402 122 V160" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.75"/>
+  <!-- Bottom-Left Bracket -->
+  <path d="M110 352 V390 C110 397 115 402 122 402 H160" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.75"/>
+  <!-- Bottom-Right Bracket -->
+  <path d="M352 402 H390 C397 402 402 397 402 390 V352" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.75"/>
+
+  <!-- Center Outer Camera Ring -->
+  <circle cx="256" cy="256" r="144" stroke="#334155" stroke-width="8" fill="#0b0f19" opacity="0.9"/>
+  <circle cx="256" cy="256" r="136" stroke="url(#bladeGrad2)" stroke-width="2" fill="none" opacity="0.4"/>
+
+  <!-- Ambient Center Glow -->
+  <circle cx="256" cy="256" r="110" fill="url(#centerGlow)"/>
+
+  <!-- Aperture Iris / Blades (Stylized Hexagonal/Octagonal Geometry) -->
+  <g transform="translate(256, 256)">
+    <!-- Blade 1 -->
+    <path d="M0 -115 L58 -50 L-30 -40 Z" fill="url(#bladeGrad1)" opacity="0.95"/>
+    <!-- Blade 2 -->
+    <path d="M0 -115 L58 -50 L-30 -40 Z" fill="url(#bladeGrad2)" opacity="0.95" transform="rotate(60)"/>
+    <!-- Blade 3 -->
+    <path d="M0 -115 L58 -50 L-30 -40 Z" fill="url(#bladeGrad1)" opacity="0.95" transform="rotate(120)"/>
+    <!-- Blade 4 -->
+    <path d="M0 -115 L58 -50 L-30 -40 Z" fill="url(#bladeGrad2)" opacity="0.95" transform="rotate(180)"/>
+    <!-- Blade 5 -->
+    <path d="M0 -115 L58 -50 L-30 -40 Z" fill="url(#bladeGrad1)" opacity="0.95" transform="rotate(240)"/>
+    <!-- Blade 6 -->
+    <path d="M0 -115 L58 -50 L-30 -40 Z" fill="url(#bladeGrad2)" opacity="0.95" transform="rotate(300)"/>
+
+    <!-- Inner Core Lens -->
+    <circle cx="0" cy="0" r="52" fill="url(#lensGlass)"/>
+    <circle cx="0" cy="0" r="52" stroke="#38bdf8" stroke-width="3" fill="none" opacity="0.8"/>
+    <circle cx="0" cy="0" r="28" fill="#0284c7" opacity="0.3"/>
+
+    <!-- Specular Highlight / Light Glint -->
+    <ellipse cx="-18" cy="-18" rx="14" ry="8" transform="rotate(-35 -18 -18)" fill="#ffffff" opacity="0.65"/>
+    <circle cx="14" cy="14" r="4" fill="#ffffff" opacity="0.4"/>
+  </g>
+
+  <!-- Sparkle Accent (Top Right of Lens) -->
+  <g transform="translate(365, 145)">
+    <path d="M0 -18 Q0 0 18 0 Q0 0 0 18 Q0 0 -18 0 Q0 0 0 -18 Z" fill="#38bdf8" opacity="0.9"/>
+    <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+  </g>
+</svg>
