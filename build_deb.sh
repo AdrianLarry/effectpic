@@ -101,7 +101,7 @@ Section: graphics
 Priority: optional
 Architecture: all
 Maintainer: AdrianLarry <familystyle@outlook.es>
-Depends: python3 (>= 3.10), python3-venv, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, python3-pil
+Depends: python3 (>= 3.10), python3-venv, python3-gi, gir1.2-gtk-4.0, python3-pil
 Homepage: https://github.com/AdrianLarry/effectpic
 Description: Editor fotográfico para redes sociales con Modo Retrato IA
  EffectPic permite adaptar imágenes a formatos 1:1, 4:5, 9:16 y 16:9
